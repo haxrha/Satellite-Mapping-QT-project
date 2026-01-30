@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import yfinance as yf
-
+from matplotlib import pyplot as plt
 from sentinelhub import (
     SHConfig,
     SentinelHubRequest,
@@ -62,10 +62,7 @@ dates = pd.date_range("2023-01-01", "2023-03-01", freq="7D")
 
 records = []
 def parking_lot_feature(img):
-    """
-    img: NumPy array (H, W, 3) from Sentinel-2
-    returns: scalar feature
-    """
+    
     gray = img.mean(axis=2)
     return np.std(gray) / (np.mean(gray) + 1e-6)
 
@@ -102,6 +99,8 @@ prices = (
 
 returns = prices.pct_change().shift(-1)
 #print(returns)
+trading_days = returns.index
+
 
 earnings = {}
 
@@ -122,4 +121,85 @@ df["trade"] = df.apply(
     axis=1
 )
 df = df[df["trade"]]
+def next_trading_day(date, trading_days):
+    return trading_days[trading_days >= date][0]
+
+df["signal"] = (
+    df.groupby("date")["feature"]
+      .rank(pct=True) - 0.5
+)
+df["signal"] /= (
+    df.groupby("date")["signal"]
+      .transform(lambda x: x.abs().sum())
+)
+df["trade_date"] = df["date"].apply(
+    lambda d: next_trading_day(d, trading_days)
+)
+df["ret"] = df.apply(
+    lambda x: returns.loc[x["trade_date"], x["ticker"]],
+    axis=1
+)
+df["pnl"] = df["signal"] * df["ret"]
+daily_pnl = df.groupby("date")["pnl"].sum()
+sharpe = np.sqrt(252) * daily_pnl.mean() / daily_pnl.std()
+cum_pnl = (1 + daily_pnl).cumprod()
+ic = (
+    df.groupby("date")[["signal", "ret"]]
+      .corr()
+      .iloc[0::2, -1]
+      .mean()
+)
+print(sharpe)
+print(daily_pnl)
+print(cum_pnl)
+print(ic)
 df.to_csv("trade_results.csv",index=False)
+
+
+
+equity = (1 + daily_pnl).cumprod()
+
+plt.figure(figsize=(10,4))
+plt.plot(equity)
+plt.title("Equity Curve")
+plt.ylabel("Portfolio Value")
+plt.xlabel("Date")
+plt.show()
+
+rolling_max = equity.cummax()
+drawdown = equity / rolling_max - 1
+
+plt.figure(figsize=(10,4))
+plt.plot(drawdown)
+plt.title("Drawdown")
+plt.ylabel("Drawdown")
+plt.xlabel("Date")
+plt.show()
+
+df["signal_lag"] = df.groupby("ticker")["signal"].shift(1)
+df["turnover"] = (df["signal"] - df["signal_lag"]).abs()
+
+daily_turnover = df.groupby("date")["turnover"].sum()
+TCOST = 0.0005
+
+daily_cost = TCOST * daily_turnover
+daily_pnl_net = daily_pnl - daily_cost
+equity_net = (1 + daily_pnl_net).cumprod()
+
+sharpe_net = np.sqrt(252) * daily_pnl_net.mean() / daily_pnl_net.std()
+plt.figure(figsize=(10,4))
+plt.plot(equity, label="Gross")
+plt.plot(equity_net, label="Net")
+plt.legend()
+plt.title("Equity Curve (Gross vs Net)")
+plt.show()
+
+sharpe_net = np.sqrt(252) * daily_pnl_net.mean() / daily_pnl_net.std()
+stats = {
+    "Sharpe (gross)": np.sqrt(252) * daily_pnl.mean() / daily_pnl.std(),
+    "Sharpe (net)": sharpe_net,
+    "Max drawdown": drawdown.min(),
+    "Avg daily turnover": daily_turnover.mean()
+}
+print(stats)
+pd.Series(stats)
