@@ -14,7 +14,7 @@ from sentinelhub import (
 stores=pd.read_csv("retail_store_coordinates.csv")
 config = SHConfig()
 config.sh_client_id = "1bea8abb-783a-4ed5-abab-8dc486810d82"
-config.sh_client_secret = "wuB0b9jxy4RTI1oNVJ2Ak1AXvNihigOH"
+config.sh_client_secret = "..."
 
 def make_bbox(lat, lon, meters=200):
     d = meters / 111_000  # approx deg per meter
